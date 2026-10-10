@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 
 function loadEnv() {
@@ -251,7 +251,7 @@ const server = http.createServer(async (req, res) => {
 
   // Serve the production Vite build from the same origin as the API.
   // API routes are handled above and unknown /api paths must remain JSON 404s.
-  if ((req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api/')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api')) {
     let requestedPath;
     try {
       requestedPath = resolve(DIST_DIR, `.${decodeURIComponent(url.pathname)}`);
@@ -264,7 +264,7 @@ const server = http.createServer(async (req, res) => {
     if (!isInsideDist) return send(res, 403, { error: 'Forbidden.' });
 
     try {
-      if (!existsSync(filePath) || !readFileSync(filePath, { flag: 'r' })) {
+      if (!existsSync(filePath) || !statSync(filePath).isFile()) {
         filePath = resolve(DIST_DIR, 'index.html');
       }
     } catch {
