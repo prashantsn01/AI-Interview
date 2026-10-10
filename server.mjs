@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { extname, resolve, sep } from 'node:path';
 
 function loadEnv() {
   const envPath = resolve(process.cwd(), '.env');
@@ -18,7 +18,8 @@ function loadEnv() {
 }
 loadEnv();
 
-const PORT = Number(process.env.API_PORT || 3001);
+const PORT = Number(process.env.PORT || process.env.API_PORT || 3001);
+const DIST_DIR = resolve(process.cwd(), 'dist');
 const MODEL = 'gemini-3.1-flash-lite';
 const TRANSCRIBE_MODEL = 'gemini-3.5-transcribe';
 const TTS_MODEL = 'gemini-3.8-flash-tts';
@@ -247,10 +248,66 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+
+  // Serve the production Vite build from the same origin as the API.
+  // API routes are handled above and unknown /api paths must remain JSON 404s.
+  if ((req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api/')) {
+    let requestedPath;
+    try {
+      requestedPath = resolve(DIST_DIR, `.${decodeURIComponent(url.pathname)}`);
+    } catch {
+      return send(res, 400, { error: 'Invalid URL path.' });
+    }
+
+    const isInsideDist = requestedPath === DIST_DIR || requestedPath.startsWith(DIST_DIR + sep);
+    let filePath = requestedPath;
+    if (!isInsideDist) return send(res, 403, { error: 'Forbidden.' });
+
+    try {
+      if (!existsSync(filePath) || !readFileSync(filePath, { flag: 'r' })) {
+        filePath = resolve(DIST_DIR, 'index.html');
+      }
+    } catch {
+      filePath = resolve(DIST_DIR, 'index.html');
+    }
+
+    try {
+      const content = readFileSync(filePath);
+      const contentTypes = {
+        '.html': 'text/html; charset=utf-8',
+        '.js': 'text/javascript; charset=utf-8',
+        '.mjs': 'text/javascript; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.json': 'application/json; charset=utf-8',
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
+        '.ico': 'image/x-icon',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2',
+        '.ttf': 'font/ttf',
+        '.pdf': 'application/pdf',
+        '.txt': 'text/plain; charset=utf-8',
+      };
+      const type = contentTypes[extname(filePath).toLowerCase()] || 'application/octet-stream';
+      const headers = {
+        'Content-Type': type,
+        'Cache-Control': filePath.endsWith('.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
+      };
+      res.writeHead(200, headers);
+      return res.end(req.method === 'HEAD' ? undefined : content);
+    } catch {
+      return send(res, 503, { error: 'Frontend build is missing. Run npm run build before starting the server.' });
+    }
+  }
+
   return send(res, 404, { error: 'Not found.' });
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`InterviewForge Gemini backend listening on http://127.0.0.1:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`InterviewForge server listening on 0.0.0.0:${PORT}`);
   console.log(`Model: ${MODEL} · API key ${process.env.GEMINI_API_KEY ? 'configured' : 'missing (.env)'}`);
 });
